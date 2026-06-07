@@ -16,8 +16,10 @@ import MLXUtilsLibrary
 final class MisakiG2PProcessor : G2PProcessor {
   /// The MisakiSwift English G2P engine, set when an English language is selected.
   var misaki: EnglishG2P?
-  /// The MisakiSwift Japanese G2P engine, set when `.ja` is selected.
-  var japanese: JapaneseG2P?
+  /// The MisakiSwift Japanese G2P engine, set when `.ja` is selected. Resolved by
+  /// `makeJapanesePhonemizer()` to OpenJTalk when its dictionary is available, else
+  /// the pure-Apple `JapaneseG2P` fallback.
+  var japanese: JapanesePhonemizer?
 
   /// Configures the processor for the specified language.
   /// - Parameter language: The target language for phonemization. `.enUS`, `.enGB` and `.ja` are supported.
@@ -31,7 +33,7 @@ final class MisakiG2PProcessor : G2PProcessor {
     case .enGB:
       misaki = EnglishG2P(british: true)
     case .ja:
-      japanese = JapaneseG2P()
+      japanese = makeJapanesePhonemizer()
     default:
       throw G2PProcessorError.unsupportedLanguage
     }

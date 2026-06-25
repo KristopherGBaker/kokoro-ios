@@ -7,8 +7,8 @@ phonemes) and **mixed Japanese/English code-switching** alongside the original
 English support, and tracks a pinned MLX toolchain that runs cleanly on current
 Apple Silicon.
 
-It powers [Aoede](https://github.com/KristopherGBaker/Aoede), a local-first reader
-for macOS and iOS/iPadOS that reads English and Japanese with furigana.
+It powers Aoede, a local-first reader for macOS and iOS/iPadOS that reads English
+and Japanese with furigana.
 
 > **Relationship to upstream.** All of the original engine — the PyTorch→MLX port,
 > the audio graph, per-token timestamps — is mlalma's (and the

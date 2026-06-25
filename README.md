@@ -1,34 +1,52 @@
-# Kokoro TTS for Swift
+# KokoroSwift — Japanese-enabled fork
 
-✨ *New in 1.0.8:* Added timestamps for each token. Please check [Kokoro Test App](https://github.com/mlalma/KokoroTestApp) how to use them.
+A maintained fork of [mlalma/kokoro-ios](https://github.com/mlalma/kokoro-ios)
+(KokoroSwift), the Swift/MLX port of the [Kokoro](https://github.com/hexgrad/kokoro)
+neural TTS model. This fork adds **Japanese synthesis** (with pitch-accent-aware
+phonemes) and **mixed Japanese/English code-switching** alongside the original
+English support, and tracks a pinned MLX toolchain that runs cleanly on current
+Apple Silicon.
 
-✨ *New in 1.0.5:* Voice styles are moved out of the library to the integrating application. Please check [Kokoro Test App](https://github.com/mlalma/KokoroTestApp) how to use them.
+It powers [Aoede](https://github.com/KristopherGBaker/Aoede), a local-first reader
+for macOS and iOS/iPadOS that reads English and Japanese with furigana.
 
-Kokoro is a high-quality TTS (text-to-speech) model, providing faster than real-time English audio generation.
+> **Relationship to upstream.** All of the original engine — the PyTorch→MLX port,
+> the audio graph, per-token timestamps — is mlalma's (and the
+> [MLX-Audio](https://github.com/Blaizzy/mlx-audio) project it ports). This fork
+> exists because upstream is no longer actively taking changes, in particular
+> non-English support. We keep it on the `feat/japanese-g2p` branch and develop in
+> the open; PRs upstream would be welcome if that ever changes. Original work is
+> retained under its MIT license (see [LICENSE](LICENSE)).
 
-*NOTE:* This is a SPM package of the TTS engine. For an application integrating Kokoro and showing how the neural speech synthesis works, please see [KokoroTestApp](https://github.com/mlalma/KokoroTestApp) project.
+## What this fork adds
 
-Kokoro TTS port is based on the great work done in [MLX-Audio project](https://github.com/Blaizzy/mlx-audio), where the model was ported from PyTorch to MLX Python. This project ports the MLX Python code to MLX Swift.
-
-Currently the library generates audio ~3.3 times faster than real-time on the release build on iPhone 13 Pro after warm up / first run.
+- **Japanese (`.ja`) synthesis** routed through our
+  [MisakiSwift fork](https://github.com/KristopherGBaker/MisakiSwift)'s Japanese
+  G2P — true readings + pitch-accent metadata via an OpenJTalk frontend, with a
+  pure-Apple fallback when no dictionary is installed.
+- **Mixed JA/EN code-switching.** `setLanguage(_:)` keeps each language's G2P
+  engine **built once and cached**, so a caller can alternate languages within a
+  single utterance without rebuilding the (expensive) OpenJTalk frontend each time.
+- **MLX 0.31.4 pin.** `mlx-swift` is pinned `exact: "0.31.4"` — 0.30.x garbles
+  synthesis onsets on some devices (e.g. M-series with newer GPUs).
+- Per-token timestamps (from upstream) used to drive word-level karaoke highlight
+  timing.
 
 ## Requirements
 
-- iOS 18.0+
-- macOS 15.0+
-- (Other Apple platforms may work as well)
+- iOS 18.0+ / macOS 15.0+ (other Apple platforms may work)
+- Apple Silicon — MLX requires a Metal GPU. **MLX does not run on the iOS
+  Simulator**, so Japanese/Kokoro synthesis must be exercised on a real device.
 
 ## Installation
 
-Add KokoroSwift to your project using Swift Package Manager:
+Swift Package Manager — point at this fork's branch:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/mlalma/kokoro-ios.git", from: "1.0.0")
+    .package(url: "https://github.com/KristopherGBaker/kokoro-ios", branch: "feat/japanese-g2p")
 ]
 ```
-
-Then add it to your target:
 
 ```swift
 .target(
@@ -39,39 +57,73 @@ Then add it to your target:
 )
 ```
 
+The Japanese G2P dependency ([MisakiSwift fork](https://github.com/KristopherGBaker/MisakiSwift))
+must be pinned to the **same** `feat/japanese-g2p` branch.
+
 ## Usage
+
+You supply the Kokoro model weights and a voice style (`MLXArray`); see
+[KokoroTestApp](https://github.com/mlalma/KokoroTestApp) for how to obtain them.
+
+### English
 
 ```swift
 import KokoroSwift
 
-// Initialize the TTS engine
-let modelPath = URL(fileURLWithPath: "path/to/your/model")
-let tts = KokoroTTS(modelPath: modelPath, g2p: .misaki)
-
-// Generate speech
-let voiceEmbedding = ... // See KokoroTestApp on how to get a voice style as an `MLXArray`
-let text = "Hello, this is a test of Kokoro TTS."
-let audioBuffer = try tts.generateAudio(voice: voiceEmbedding, language: .enUS, text: text)
-
-// audioBuffer now contains the synthesized speech
+let tts = KokoroTTS(modelPath: modelURL, g2p: .misaki)
+let (audio, tokens) = try tts.generateAudio(voice: voiceEmbedding, language: .enUS, text: "Hello, world.")
 ```
 
-## G2P (Grapheme-to-Phoneme) Options
+### Japanese
 
-- `.misaki` - MisakiSwift, default G2P processor
-- `.espeak` - eSpeakNG, an alternative G2P processor (commented out in current version)
+```swift
+import KokoroSwift
+import MisakiSwift
 
-## Model Files
+// Point the Japanese G2P at an Open JTalk UTF-8 dictionary for true readings +
+// pitch accent. Without this it falls back to a pure-Apple reading engine.
+JapaneseG2PConfiguration.dictionaryDirectory = openJTalkDictionaryURL
 
-You'll need to provide your own Kokoro TTS model file due to its large size as well as voice style. Please see example project [Kokoro Test App](https://github.com/mlalma/KokoroTestApp) how they can be included as a part of the application package.
+let (audio, tokens) = try tts.generateAudio(voice: japaneseVoice, language: .ja, text: "こんにちは、世界。")
+```
+
+`generateAudio` returns the audio samples plus per-token `MToken`s carrying
+`start_ts` / `end_ts` for highlight syncing.
+
+### Mixed Japanese + English
+
+Kokoro synthesizes one voice per call. To read text that mixes scripts, split it
+into runs and call `generateAudio` per run with the matching `language` (and,
+optionally, a per-language voice), then concatenate the audio. Because the G2P
+engines are cached, alternating `.ja` / `.enUS` across runs no longer reloads the
+OpenJTalk dictionary each time. (Aoede implements this split + stitch on top of
+this library.)
+
+## G2P (grapheme-to-phoneme) options
+
+- `.misaki` — [MisakiSwift](https://github.com/KristopherGBaker/MisakiSwift)
+  (default): English + Japanese, no eSpeak dependency.
+- `.espeak` — eSpeak NG (optional/commented out upstream).
+
+## Model files
+
+Kokoro model weights and voice styles are not bundled (size). See
+[KokoroTestApp](https://github.com/mlalma/KokoroTestApp) for packaging them.
 
 ## Dependencies
 
-This package depends on:
-- [MLX Swift](https://github.com/ml-explore/mlx-swift) - Apple's MLX framework for Swift
-- [MisakiSwift](https://github.com/mlalma/MisakiSwift) - G2P processor
-- [MLXUtilsLibrary](https://github.com/mlalma/MLXUtilsLibrary) - Utility library
+- [MLX Swift](https://github.com/ml-explore/mlx-swift) — pinned `exact: "0.31.4"`
+- [MisakiSwift (fork)](https://github.com/KristopherGBaker/MisakiSwift) — English + Japanese G2P
+- [MLXUtilsLibrary](https://github.com/mlalma/MLXUtilsLibrary) — `MToken` and shared utilities
+
+## Credits
+
+- **Kokoro model** — [hexgrad](https://github.com/hexgrad/kokoro)
+- **MLX Python port** — [MLX-Audio](https://github.com/Blaizzy/mlx-audio)
+- **Swift/MLX port (KokoroSwift)** — [Lassi Maksimainen (mlalma)](https://github.com/mlalma/kokoro-ios)
+- **Japanese support + this fork** — [Kristopher Baker](https://github.com/KristopherGBaker)
 
 ## License
 
-This project is licensed under MIT License - see the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE). Original copyright © 2025 Lassi Maksimainen;
+fork modifications © 2025–2026 Kristopher Baker, released under the same license.
